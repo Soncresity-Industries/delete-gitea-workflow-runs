@@ -32,28 +32,28 @@ const splitPattern = pattern => (pattern ?? "").split(/[,|]/).map(s => s.trim())
  * @param {string} owner
  * @param {string} repo
  */
-async function deleteRuns(instanceUrl, token, runs, context, dryRun, owner, repo) {
-  if (!runs?.length) {
+async function deleteRuns(instanceUrl, token, workflowRuns, context, dryRun, owner, repo) {
+  if (!workflowRuns?.length) {
     core.debug(`[${context}] No runs to delete.`);
     return;
   }
 
   const results = await Promise.allSettled(
-    runs.map(async (run) => {
+    workflowRuns.map(async (workflowRun) => {
       if (dryRun) {
-        core.info(`[dry-run] 🚀 Simulate deletion: Run ${run.id} (${context})`);
-        return { status: "skipped", runId: run.id };
+        core.info(`[dry-run] 🚀 Simulate deletion: Run ${workflowRun.id} (${context})`);
+        return { status: "skipped", runId: workflowRun.id };
       }
 
       try {
-        await deleteWorkflowRun(instanceUrl, token, owner, repo, run.id);
-        core.info(`✅ Successfully deleted: Run ${run.id} (${context})`);
-        return { status: "deleted", runId: run.id };
+        await deleteWorkflowRun(instanceUrl, token, owner, repo, workflowRun.id);
+        core.info(`✅ Successfully deleted: Run ${workflowRun.id} (${context})`);
+        return { status: "deleted", runId: workflowRun.id };
       } catch (err) {
         core.error(
-          `❌ Failed to delete: Run ${run.id} (${context}) - ${err.message}`
+          `❌ Failed to delete: Run ${workflowRun.id} (${context}) - ${err.message}`
         );
-        return { status: "failed", runId: run.id, error: err?.message ?? String(err) };
+        return { status: "failed", runId: workflowRun.id, error: err?.message ?? String(err) };
       }
     })
   );
@@ -85,46 +85,46 @@ async function deleteRuns(instanceUrl, token, runs, context, dryRun, owner, repo
   );
 }
 /**
- * Decide whether a run should be deleted according to the given options.
+ * Decide whether a workflow run should be deleted according to the given options.
  * Logs a reason for skipping.
- * @param {Object} run
+ * @param {Object} workflowRun
  * @param {Object} options
  * @returns {boolean}
  */
-function shouldDeleteRun(run, options) {
+function shouldDeleteRun(workflowRun, options) {
   const { checkPullRequestExist, checkBranchExistence, branchNames, allowedConclusions, retainDays = 0, skipAgeCheck = false } = options;
-  if (run.status !== "completed") {
-    core.debug(`💬 Skip: Run ${run.id} status=${run.status}`);
+  if (workflowRun.status !== "completed") {
+    core.debug(`💬 Skip: Run ${workflowRun.id} status=${workflowRun.status}`);
     return false;
   }
   // Skip runs attached to pull requests (if requested).
-  if (checkPullRequestExist && Array.isArray(run.pull_requests) && run.pull_requests.length > 0) {
-    core.debug(`💬 Skip: Run ${run.id} linked to PR(s)`);
+  if (checkPullRequestExist && Array.isArray(workflowRun.pull_requests) && workflowRun.pull_requests.length > 0) {
+    core.debug(`💬 Skip: Run ${workflowRun.id} linked to PR(s)`);
     return false;
   }
   // Skip if branch still exists
-  const headBranch = run.head_branch ?? "";
+  const headBranch = workflowRun.head_branch ?? "";
   if (checkBranchExistence && headBranch && branchNames.includes(headBranch)) {
-    core.debug(`💬 Skip: Run ${run.id} branch ${headBranch} still exists`);
+    core.debug(`💬 Skip: Run ${workflowRun.id} branch ${headBranch} still exists`);
     return false;
   }
   // Conclusion filter (if provided). If allowedConclusions is empty, that means "ALL".
   if (allowedConclusions.length > 0) {
-    const runConclusion = String(run.conclusion ?? "").toLowerCase();
+    const runConclusion = String(workflowRun.conclusion ?? "").toLowerCase();
     if (!allowedConclusions.includes(runConclusion)) {
-      core.debug(`💬 Skip: Run ${run.id} conclusion="${run.conclusion}" not allowed`);
+      core.debug(`💬 Skip: Run ${workflowRun.id} conclusion="${workflowRun.conclusion}" not allowed`);
       return false;
     }
   }
   // Age filter only when requested
   if (!skipAgeCheck && retainDays > 0) {
-    if (!run.created_at) {
-      core.debug(`💬 Skip age check: Run ${run.id} has no created_at`);
+    if (!workflowRun.created_at) {
+      core.debug(`💬 Skip age check: Run ${workflowRun.id} has no created_at`);
       return false;
     }
-    const ageDays = (Date.now() - new Date(run.created_at).getTime()) / 86400000;
+    const ageDays = (Date.now() - new Date(workflowRun.created_at).getTime()) / 86400000;
     if (ageDays < retainDays) {
-      core.debug(`💬 Skip: Run ${run.id} is ${ageDays.toFixed(1)} days old (< ${retainDays} days)`);
+      core.debug(`💬 Skip: Run ${workflowRun.id} is ${ageDays.toFixed(1)} days old (< ${retainDays} days)`);
       return false;
     }
   }
@@ -132,15 +132,15 @@ function shouldDeleteRun(run, options) {
 }
 /**
  * Group runs by date and filter runs to retain per day
- * @param {Array} runs
+ * @param {Array} workflowRuns
  * @param {number} keepMinimumRuns
  * @param {number} retainDays
  * @returns {Object} { runsToDelete: Array, runsToRetain: Array }
  */
-function filterRunsByDailyRetention(runs, keepMinimumRuns, retainDays) {
+function filterRunsByDailyRetention(workflowRuns, keepMinimumRuns, retainDays) {
   if (keepMinimumRuns <= 0 || retainDays <= 0) {
     return {
-      runsToDelete: runs,
+      runsToDelete: workflowRuns,
       runsToRetain: []
     };
   }
@@ -149,22 +149,22 @@ function filterRunsByDailyRetention(runs, keepMinimumRuns, retainDays) {
   const cutoffTime = cutoffDate.getTime();
   const runsByDate = {};
   const expiredRuns = []; // older than retainDays → delete
-  runs.forEach(run => {
-    if (!run?.created_at) {
+  workflowRuns.forEach(workflowRun => {
+    if (!workflowRun?.created_at) {
       // If no created_at treat as expired to be safe
-      expiredRuns.push(run);
+      expiredRuns.push(workflowRun);
       return;
     }
-    const runTime = new Date(run.created_at).getTime();
+    const runTime = new Date(workflowRun.created_at).getTime();
     if (isNaN(runTime) || runTime < cutoffTime) {
-      expiredRuns.push(run);
+      expiredRuns.push(workflowRun);
       return;
     }
     // Normalize date key via ISO to avoid locale variations
-    const dateKey = new Date(run.created_at).toISOString().split("T")[0]; // YYYY-MM-DD
+    const dateKey = new Date(workflowRun.created_at).toISOString().split("T")[0]; // YYYY-MM-DD
     if (!runsByDate[dateKey])
       runsByDate[dateKey] = [];
-    runsByDate[dateKey].push(run);
+    runsByDate[dateKey].push(workflowRun);
   });
   const runsToRetain = [];
   const runsToDelete = [...expiredRuns];
@@ -259,7 +259,7 @@ async function deleteWorkflowRun(instanceUrl, token, owner, repo, runId) {
   return true;
 }
 
-async function run() {
+async function main() {
   try {
     // ---------------------- 1. Parse Input Parameters ----------------------
     const token = core.getInput("token");
@@ -317,7 +317,7 @@ async function run() {
     core.info(`Processing ${filteredWorkflows.length} workflow(s)`);
     // ---------------------- 5. Delete Orphan Runs ----------------------
     const allRuns = await fetchAllRuns(instanceUrl, token, repoOwner, repoName);
-    const orphanRuns = allRuns.filter(run => !workflowIds.includes(run.workflow_id));
+    const orphanRuns = allRuns.filter(workflowRun => !workflowIds.includes(workflowRun.workflow_id));
     if (orphanRuns.length > 0) {
       core.startGroup(`Processing: orphan runs`);
       core.info(`👻 Found ${orphanRuns.length} orphan runs`);
@@ -331,17 +331,17 @@ async function run() {
 
       const runsByWorkflow = new Map();
 
-      for (const run of allRuns) {
-        if (!runsByWorkflow.has(run.workflow_id)) {
-          runsByWorkflow.set(run.workflow_id, []);
+      for (const workflowRun of allRuns) {
+        if (!runsByWorkflow.has(workflowRun.workflow_id)) {
+          runsByWorkflow.set(workflowRun.workflow_id, []);
         }
-        runsByWorkflow.get(run.workflow_id).push(run);
+        runsByWorkflow.get(workflowRun.workflow_id).push(workflowRun);
       }
 
       const runs = runsByWorkflow.get(workflow.id) ?? [];
       // Pre-filter (branch, PR, conclusion, etc.)
-      const candidates = runs.filter(run =>
-        shouldDeleteRun(run, {
+      const candidates = runs.filter(workflowRun =>
+        shouldDeleteRun(workflowRun, {
           checkPullRequestExist,
           checkBranchExistence,
           branchNames,
@@ -377,4 +377,4 @@ async function run() {
   }
 }
 // Start
-run();
+main();

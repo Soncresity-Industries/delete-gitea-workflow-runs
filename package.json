@@ -1,7 +1,7 @@
 {
-  "name": "delete-workflow-runs",
-  "version": "2.1.0",
-  "description": "GitHub Action to delete workflow runs in a repository.",
+  "name": "delete-gitea-workflow-runs",
+  "version": "1.0.0",
+  "description": "Gitea Action to delete workflow runs in a repository.",
   "main": "dist/index.js",
   "private": true,
   "files": [
@@ -17,23 +17,22 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Mattraks/delete-workflow-runs.git"
+    "url": "git+https://github.com/Soncresity-Industries/delete-gitea-workflow-runs.git"
   },
   "keywords": [
-    "github",
+    "gitea",
     "actions",
     "workflow",
     "delete"
   ],
-  "author": "Mattraks",
+  "author": "Soncresity Industries",
   "license": "MIT",
   "engines": {
     "node": ">=20.0.0"
   },
   "dependencies": {
     "@actions/core": "^2.0.2",
-    "@octokit/plugin-throttling": "^11.0.3",
-    "@octokit/rest": "^22.0.1"
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "@vercel/ncc": "^0.38.4",

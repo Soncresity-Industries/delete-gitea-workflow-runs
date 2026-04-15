@@ -1,15 +1,15 @@
-name: "Delete Workflow Runs"
-description: "GitHub Action to delete workflow runs in a repository."
-author: "Mattraks"
+name: "Delete Gitea Workflow Runs"
+description: "Gitea Action to delete workflow runs in a repository."
+author: "Soncresity Industries"
 inputs:
   token:
     description: "GitHub authentication token"
     required: false
     default: ${{ github.token }}
-  baseUrl:
+  instance_url:
     description: "GitHub API base URL (for GitHub Enterprise)"
     required: false
-    default: "https://api.github.com"
+    default: "https://gitea.com"
   repository:
     description: "Repository name in {owner}/{repo} format"
     required: false
@@ -51,7 +51,7 @@ inputs:
     default: "false"
 branding:
   icon: "trash"
-  color: "red"
+  color: "blue"
 runs:
   using: "node24"
   main: "dist/index.js"

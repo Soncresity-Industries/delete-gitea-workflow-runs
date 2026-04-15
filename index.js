@@ -1,7 +1,6 @@
 "use strict";
 const core = require("@actions/core");
-const { Octokit } = require("@octokit/rest");
-const { throttling } = require("@octokit/plugin-throttling");
+const fetch = require("node-fetch");
 /**
  * Convert input string to boolean.
  * - Treats empty / undefined input as false.
@@ -25,14 +24,15 @@ const parseBoolean = (input, falsyValues = ["0", "no", "n", "false"]) => {
 const splitPattern = pattern => (pattern ?? "").split(/[,|]/).map(s => s.trim()).filter(Boolean);
 /**
  * Bulk-delete runs using Octokit. Uses Promise.allSettled so failures don't abort the whole batch.
+ * @param {string} instanceUrl
+ * @param {string} token
  * @param {Array} runs
  * @param {string} context
  * @param {boolean} dryRun
- * @param {Octokit} octokit
  * @param {string} owner
  * @param {string} repo
  */
-async function deleteRuns(runs, context, dryRun, octokit, owner, repo) {
+async function deleteRuns(instanceUrl, token, runs, context, dryRun, owner, repo) {
   if (!runs?.length) {
     core.debug(`[${context}] No runs to delete.`);
     return;
@@ -43,7 +43,7 @@ async function deleteRuns(runs, context, dryRun, octokit, owner, repo) {
       return { status: "skipped", runId: run.id };
     }
     try {
-      await octokit.rest.actions.deleteWorkflowRun({ owner, repo, run_id: run.id });
+      await deleteWorkflowRun(instanceUrl, token, owner, repo, run.id);
       core.info(`✅ Successfully deleted: Run ${run.id} (${context})`);
       return { status: "deleted", runId: run.id };
     } catch (err) {
@@ -160,13 +160,95 @@ function filterRunsByDailyRetention(runs, keepMinimumRuns, retainDays) {
   });
   return { runsToDelete, runsToRetain };
 }
+
+// Requests to Gitea API
+async function giteaRequest(url, token) {
+  const res = await fetch(url, {
+    headers: {
+      "Authorization": `token ${token}`,
+      "Content-Type": "application/json"
+    }
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${res.statusText} - ${text}`);
+  }
+
+  return res.json();
+}
+
+async function fetchAllPages(baseUrl, token, key) {
+  let page = 1;
+  const limit = 100;
+  let results = [];
+
+  while (true) {
+    const url = `${baseUrl}?page=${page}&limit=${limit}`;
+    const data = await giteaRequest(url, token);
+
+    const items = key ? data[key] : data;
+
+    if (!items || items.length === 0) break;
+
+    results.push(...items);
+
+    if (items.length < limit) break;
+    page++;
+  }
+
+  return results;
+}
+
+async function fetchAllBranches(instanceUrl, token, owner, repo) {
+  return fetchAllPages(
+      `${instanceUrl}/api/v1/repos/${owner}/${repo}/branches`,
+      token
+  );
+}
+
+async function fetchAllRuns(instanceUrl, token, owner, repo) {
+  return fetchAllPages(
+      `${instanceUrl}/api/v1/repos/${owner}/${repo}/actions/runs`,
+      token,
+      "workflow_runs"
+  );
+}
+
+async function fetchAllWorkflows(instanceUrl, token, owner, repo) {
+  return fetchAllPages(
+      `${instanceUrl}/api/v1/repos/${owner}/${repo}/actions/workflows`,
+      token,
+      "workflows"
+  );
+}
+
+async function deleteWorkflowRun(instanceUrl, token, owner, repo, runId) {
+  const url = `${instanceUrl}/api/v1/repos/${owner}/${repo}/actions/runs/${runId}`;
+
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: {
+      "Authorization": `token ${token}`,
+      "Content-Type": "application/json"
+    }
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Failed to delete run ${runId}: ${res.status} ${res.statusText} ${text}`);
+  }
+
+  return true;
+}
+
 async function run() {
   try {
     // ---------------------- 1. Parse Input Parameters ----------------------
     const token = core.getInput("token");
     if (!token)
       throw new Error("Missing required input: token");
-    const baseUrl = core.getInput("baseUrl");
+    const instanceUrl = core.getInput("instance_url");
     const repositoryInput = core.getInput("repository");
     if (!repositoryInput)
       throw new Error('Missing required input: repository (expected "owner/repo")');
@@ -182,38 +264,16 @@ async function run() {
     const dryRun = parseBoolean(core.getInput("dry_run"));
     const checkBranchExistence = parseBoolean(core.getInput("check_branch_existence"));
     const checkPullRequestExist = parseBoolean(core.getInput("check_pullrequest_exist"));
-    // ---------------------- 2. Initialize Octokit Client ----------------------
-    const MyOctokit = Octokit.plugin(throttling);
-    const octokit = new MyOctokit({
-      auth: token,
-      baseUrl,
-      throttle: {
-        onRateLimit: (retryAfter, options) => {
-          core.warning(`Rate limit: ${options.method} ${options.url} — wait ${retryAfter}s`);
-          return retryAfter < 5;
-        },
-        onSecondaryRateLimit: () => core.warning("Secondary rate limit hit"),
-      },
-    });
-    // ---------------------- 3. Fetch Workflows ----------------------
-    const workflows = await octokit.paginate(octokit.rest.actions.listRepoWorkflows, {
-      owner: repoOwner,
-      repo: repoName,
-      per_page: 100,
-    });
+    // ---------------------- 2. Fetch Workflows ----------------------
+    const workflows = await fetchAllWorkflows(instanceUrl, token, repoOwner, repoName);
     const workflowIds = workflows.map(w => w.id);
-    // ---------------------- 4. Fetch Branches (if needed) ----------------------
+    // ---------------------- 3. Fetch Branches (if needed) ----------------------
     let branchNames = [];
     if (checkBranchExistence) {
-      branchNames = (
-        await octokit.paginate(octokit.rest.repos.listBranches, {
-          owner: repoOwner,
-          repo: repoName,
-          per_page: 100,
-        })).map(b => b.name);
+      branchNames = (await fetchAllBranches(instanceUrl, token, repoOwner, repoName)).map(b => b.name);
       core.info(`💬 Found ${branchNames.length} branches`);
     }
-    // ---------------------- 5. Filter Workflows ----------------------
+    // ---------------------- 4. Filter Workflows ----------------------
     let filteredWorkflows = workflows;
     if (deleteWorkflowPattern) {
       const patterns = splitPattern(deleteWorkflowPattern).map(p => p.toLowerCase());
@@ -223,7 +283,7 @@ async function run() {
           name,
           path
         }) => {
-          const filename = (path || "").replace(/^\.github\/workflows\//, "");
+          const filename = (path || "").replace(/^\.github\/workflows\//, "").replace(/^\.gitea\/workflows\//, "");
           const nameLower = String(name || "").toLowerCase();
           const filenameLower = String(filename || "").toLowerCase();
           return patterns.some(p => nameLower.includes(p) || filenameLower.includes(p));
@@ -238,29 +298,30 @@ async function run() {
       }) => states.includes(String(state ?? "").toLowerCase()));
     }
     core.info(`Processing ${filteredWorkflows.length} workflow(s)`);
-    // ---------------------- 6. Delete Orphan Runs ----------------------
-    const allRuns = await octokit.paginate(octokit.rest.actions.listWorkflowRunsForRepo, {
-      owner: repoOwner,
-      repo: repoName,
-      per_page: 100,
-    });
+    // ---------------------- 5. Delete Orphan Runs ----------------------
+    const allRuns = await fetchAllRuns(instanceUrl, token, repoOwner, repoName);
     const orphanRuns = allRuns.filter(run => !workflowIds.includes(run.workflow_id));
     if (orphanRuns.length > 0) {
       core.startGroup(`Processing: orphan runs`);
       core.info(`👻 Found ${orphanRuns.length} orphan runs`);
-      await deleteRuns(orphanRuns, "orphan runs", dryRun, octokit, repoOwner, repoName);
+      await deleteRuns(instanceUrl, token, orphanRuns, "orphan runs", dryRun, repoOwner, repoName);
       core.endGroup();
     }
-    // ---------------------- 7. Process Each Workflow ----------------------
+    // ---------------------- 6. Process Each Workflow ----------------------
     const allowedConclusions = deleteRunByConclusionPattern.toUpperCase() === "ALL" ? [] : splitPattern(deleteRunByConclusionPattern).map(c => c.toLowerCase());
     for (const workflow of filteredWorkflows) {
       core.startGroup(`Processing: ${workflow.name} (ID: ${workflow.id})`);
-      const runs = await octokit.paginate(octokit.rest.actions.listWorkflowRuns, {
-        owner: repoOwner,
-        repo: repoName,
-        workflow_id: workflow.id,
-        per_page: 100,
-      });
+
+      const runsByWorkflow = new Map();
+
+      for (const run of allRuns) {
+        if (!runsByWorkflow.has(run.workflow_id)) {
+          runsByWorkflow.set(run.workflow_id, []);
+        }
+        runsByWorkflow.get(run.workflow_id).push(run);
+      }
+
+      const runs = runsByWorkflow.get(workflow.id) ?? [];
       // Pre-filter (branch, PR, conclusion, etc.)
       const candidates = runs.filter(run =>
         shouldDeleteRun(run, {
@@ -287,7 +348,7 @@ async function run() {
       }
       if (runsToDelete.length > 0) {
         core.info(`🚀 Deleting ${runsToDelete.length} run(s)`);
-        await deleteRuns(runsToDelete, workflow.name, dryRun, octokit, repoOwner, repoName);
+        await deleteRuns(instanceUrl, token, runsToDelete, workflow.name, dryRun, repoOwner, repoName);
       } else {
         core.info("💬 No runs to delete");
       }

@@ -1,11 +1,11 @@
-# Delete Workflow Runs v2.1.0
+# Delete Gitea Workflow Runs v1.0.0
 
-A GitHub Action to delete workflow runs in a repository. This Action uses JavaScript and interacts with the GitHub API to manage workflow runs efficiently.
+An Action to delete workflow runs in a repository hosted on a Gitea instance. This Action uses JavaScript and interacts with the Gitea API to manage workflow runs efficiently.
 
 ## Features
 
 - Deletes workflow runs based on retention period and minimum runs to keep.
-- **New:** Supports "daily retention" keep a minimum number of runs per day (`use_daily_retention` input).
+- Supports "daily retention" keep a minimum number of runs per day (`use_daily_retention` input).
 - Deletes orphan workflow runs (runs for deleted workflows).
 - Supports filtering by workflow name, filename, state, or run conclusion.
 - Includes a dry-run mode to simulate deletions without making changes.
@@ -16,6 +16,7 @@ A GitHub Action to delete workflow runs in a repository. This Action uses JavaSc
 
 | Input | Default | Description |
 |---|---|---|
+| `instance_url` | `https://gitea.com` | Your Gitea instance URL |
 | `token` | `${{github.token}}` | GitHub token used for authentication. Use `github.token` for the current repository or a PAT with `repo` scope for cross-repo access. Token must have appropriate permissions (see Permissions). |
 | `repository` | `${{github.repository}}` | The target repository in `owner/repo` format. |
 | `retain_days` | `30` | Number of days to retain workflow runs before deletion. |
@@ -44,20 +45,19 @@ The token used must allow the Action to list and delete workflow runs. Recommend
 - actions: write
 - contents: read
 
-Using `${{ github.token }}` in workflows is recommended for the current repository. For cross-repository operations or if you need broader scope, use a Personal Access Token (PAT) with `repo` scope and appropriate permissions.
+Using `${{ gitea.token }}` in workflows is recommended for the current repository. For cross-repository operations or if you need broader scope, use a Personal Access Token (PAT) with `repo` scope and appropriate permissions.
 
 ## Setup
 
 To use this Action in your workflows:
 
 - Reference a released tag, the major tag, or a specific commit SHA, for example:
-  - uses: Mattraks/delete-workflow-runs@v2
-  - uses: Mattraks/delete-workflow-runs@v2.1.0
-  - uses: Mattraks/delete-workflow-runs@\<full-sha>
+  - uses: Soncresity-Industries/delete-gitea-workflow-runs@v1
+  - uses: Soncresity-Industries/delete-gitea-workflow-runs@v1.0.0
+  - uses: Soncresity-Industries/delete-gitea-workflow-runs@\<full-sha>
 - Ensure the workflow grants the Action the permissions it needs (actions: write, contents: read).
 - Provide a token via the `token` input. For operations on repositories other than the workflow repository or for private repositories, use a PAT with `repo` scope (store it in GitHub Secrets).
 - Configure inputs (retain_days, keep_minimum_runs, delete_workflow_pattern, etc.) per your policy. See the Examples section below for typical workflows (scheduled, manual, matrix).
-- For GitHub Enterprise Server, set `baseUrl` to your API base (e.g. `https://github.mycompany.com/api/v3`).
 
 ## Examples
 
@@ -78,8 +78,9 @@ jobs:
       contents: read
     steps:
       - name: Delete workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
+        uses: Soncresity-Industries/delete-gitea-workflow-runs@v1
         with:
+          instance_url: https://gitea.instance.url
           token: ${{ github.token }}
           repository: ${{ github.repository }}
           retain_days: 30
@@ -147,8 +148,9 @@ jobs:
       contents: read
     steps:
       - name: Delete workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
+        uses: Soncresity-Industries/delete-gitea-workflow-runs@v1
         with:
+          instance_url: https://gitea.instance.url
           token: ${{ github.token }}
           repository: ${{ github.repository }}
           retain_days: ${{ github.event.inputs.days }}
@@ -194,8 +196,9 @@ jobs:
       contents: read
     steps:
       - name: Delete workflow runs in repository
-        uses: Mattraks/delete-workflow-runs@v2
+        uses: Soncresity-Industries/delete-gitea-workflow-runs@v1
         with:
+          instance_url: https://gitea.instance.url
           token: ${{ secrets.PAT_TOKEN }} # PAT with repo scope required for cross-repo
           repository: ${{ matrix.repository }}
           retain_days: ${{ github.event.inputs.days }}
@@ -204,29 +207,6 @@ jobs:
           delete_workflow_pattern: build|deploy
           use_daily_retention: ${{ github.event.inputs.use_daily_retention }}
           dry_run: "false"
-```
-
-### GitHub Enterprise / GHES
-
-For GitHub Enterprise, specify the API base URL via `baseUrl`:
-
-```yaml
-jobs:
-  delete-runs:
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-      contents: read
-    steps:
-      - name: Delete old workflow runs
-        uses: Mattraks/delete-workflow-runs@v2
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          baseUrl: https://github.mycompany.com/api/v3
-          repository: mycompany/myrepo
-          retain_days: 30
-          keep_minimum_runs: 6
-          use_daily_retention: "true"
 ```
 
 ## Development

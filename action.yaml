@@ -7,7 +7,7 @@ inputs:
     required: false
     default: ${{ github.token }}
   instance_url:
-    description: "GitHub API base URL (for GitHub Enterprise)"
+    description: "Gitea base URL (for API calls)"
     required: false
     default: "https://gitea.com"
   repository:

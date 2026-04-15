@@ -37,35 +37,52 @@ async function deleteRuns(instanceUrl, token, runs, context, dryRun, owner, repo
     core.debug(`[${context}] No runs to delete.`);
     return;
   }
-  const tasks = runs.map(run => async () => {
-    if (dryRun) {
-      core.info(`[dry-run] 🚀 Simulate deletion: Run ${run.id} (${context})`);
-      return { status: "skipped", runId: run.id };
-    }
-    try {
-      await deleteWorkflowRun(instanceUrl, token, owner, repo, run.id);
-      core.info(`✅ Successfully deleted: Run ${run.id} (${context})`);
-      return { status: "deleted", runId: run.id };
-    } catch (err) {
-      core.error(`❌ Failed to delete: Run ${run.id} (${context}) - ${err.message}`);
-      return { status: "failed", runId: run.id, error: err };
-    }
-  });
-  const results = await Promise.allSettled(tasks.map(t => t()));
+
+  const results = await Promise.allSettled(
+    runs.map(async (run) => {
+      if (dryRun) {
+        core.info(`[dry-run] 🚀 Simulate deletion: Run ${run.id} (${context})`);
+        return { status: "skipped", runId: run.id };
+      }
+
+      try {
+        await deleteWorkflowRun(instanceUrl, token, owner, repo, run.id);
+        core.info(`✅ Successfully deleted: Run ${run.id} (${context})`);
+        return { status: "deleted", runId: run.id };
+      } catch (err) {
+        core.error(
+          `❌ Failed to delete: Run ${run.id} (${context}) - ${err.message}`
+        );
+        return { status: "failed", runId: run.id, error: err?.message ?? String(err) };
+      }
+    })
+  );
+
   const summary = results.reduce(
     (acc, res) => {
-      const status = res.status === "fulfilled" ? res.value?.status : null;
+      const status = res.status === "fulfilled" ? res.value?.status : "failed";
+
       switch (status) {
-        case "deleted": acc.deleted++; break;
-        case "skipped": acc.skipped++; break;
-        case "failed": acc.failed++; break;
-        default: acc.failed++;
+        case "deleted":
+          acc.deleted++;
+          break;
+        case "skipped":
+          acc.skipped++;
+          break;
+        case "failed":
+        default:
+          acc.failed++;
+          break;
       }
+
       return acc;
     },
-    { deleted: 0, skipped: 0, failed: 0 },
+    { deleted: 0, skipped: 0, failed: 0 }
   );
-  core.info(`🗑️ Deletion summary for ${context}: deleted=${summary.deleted}, skipped=${summary.skipped}, failed=${summary.failed}`);
+
+  core.info(
+    `🗑️ Deletion summary for ${context}: deleted=${summary.deleted}, skipped=${summary.skipped}, failed=${summary.failed}`
+  );
 }
 /**
  * Decide whether a run should be deleted according to the given options.
@@ -202,24 +219,24 @@ async function fetchAllPages(baseUrl, token, key) {
 
 async function fetchAllBranches(instanceUrl, token, owner, repo) {
   return fetchAllPages(
-      `${instanceUrl}/api/v1/repos/${owner}/${repo}/branches`,
-      token
+    `${instanceUrl}/api/v1/repos/${owner}/${repo}/branches`,
+    token
   );
 }
 
 async function fetchAllRuns(instanceUrl, token, owner, repo) {
   return fetchAllPages(
-      `${instanceUrl}/api/v1/repos/${owner}/${repo}/actions/runs`,
-      token,
-      "workflow_runs"
+    `${instanceUrl}/api/v1/repos/${owner}/${repo}/actions/runs`,
+    token,
+    "workflow_runs"
   );
 }
 
 async function fetchAllWorkflows(instanceUrl, token, owner, repo) {
   return fetchAllPages(
-      `${instanceUrl}/api/v1/repos/${owner}/${repo}/actions/workflows`,
-      token,
-      "workflows"
+    `${instanceUrl}/api/v1/repos/${owner}/${repo}/actions/workflows`,
+    token,
+    "workflows"
   );
 }
 
@@ -280,9 +297,9 @@ async function run() {
       if (patterns.length > 0) {
         core.info(`🔍 Filtering by patterns: ${patterns.join(", ")}`);
         filteredWorkflows = filteredWorkflows.filter(({
-          name,
-          path
-        }) => {
+                                                        name,
+                                                        path
+                                                      }) => {
           const filename = (path || "").replace(/^\.github\/workflows\//, "").replace(/^\.gitea\/workflows\//, "");
           const nameLower = String(name || "").toLowerCase();
           const filenameLower = String(filename || "").toLowerCase();
@@ -294,8 +311,8 @@ async function run() {
       const states = splitPattern(deleteWorkflowByStatePattern).map(s => s.toLowerCase());
       core.info(`🔍 Filtering by state: ${states.join(", ")}`);
       filteredWorkflows = filteredWorkflows.filter(({
-        state
-      }) => states.includes(String(state ?? "").toLowerCase()));
+                                                      state
+                                                    }) => states.includes(String(state ?? "").toLowerCase()));
     }
     core.info(`Processing ${filteredWorkflows.length} workflow(s)`);
     // ---------------------- 5. Delete Orphan Runs ----------------------

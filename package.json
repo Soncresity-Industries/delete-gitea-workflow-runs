@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "prebuild": "npm run lint",
-    "build": "ncc build index.js -o dist --minify",
+    "build": "ncc build index.js -o dist",
     "test": "jest",
     "lint": "eslint . --ext .js --no-config-lookup",
     "format": "prettier --print-width 200 --write ./index.js",

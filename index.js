@@ -1,6 +1,5 @@
 "use strict";
 const core = require("@actions/core");
-const fetch = require("node-fetch");
 /**
  * Convert input string to boolean.
  * - Treats empty / undefined input as false.
